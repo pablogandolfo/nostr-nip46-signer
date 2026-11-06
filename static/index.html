@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <meta name="referrer" content="no-referrer">
+
+  <title>Remote Signer | Nostr</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f162a;
+      --panel: #17243b;
+      --accent: #4c8dff;
+      --text: #e8edf7;
+      --muted: #9baac4;
+      --border: #344766;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px 16px;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px system-ui, sans-serif;
+    }
+
+    main {
+      width: 100%;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      font-size: 2rem;
+    }
+
+    h2 {
+      margin-top: 0;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    section {
+      min-width: 0;
+      width: 100%;
+      background: var(--panel);
+      padding: 24px;
+      border-radius: 16px;
+      margin-top: 20px;
+      overflow: hidden;
+    }
+
+    label {
+      display: block;
+      margin-top: 16px;
+    }
+
+    input,
+    button,
+    textarea {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }
+
+    input,
+    textarea {
+      min-width: 0;
+    }
+
+    button {
+      background: var(--accent);
+      border: 0;
+      cursor: pointer;
+      font-weight: 600;
+      min-height: 48px;
+      transition: opacity 0.2s ease;
+    }
+
+    button.secondary {
+      background: #283955;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    #identity {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      margin: 16px 0;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      word-break: break-all;
+      white-space: normal;
+    }
+
+    #bunkerURI {
+      min-height: 110px;
+      resize: vertical;
+      overflow-wrap: anywhere;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+
+    #status {
+      margin-top: 16px;
+      min-height: 24px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 20px 12px;
+      }
+
+      section {
+        padding: 18px;
+      }
+
+      h1 {
+        font-size: 1.7rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+<main>
+
+  <h1>Remote Signer</h1>
+  <p class="muted">Nostr NIP-46</p>
+
+  <section>
+    <h2>Acceso de administrador</h2>
+
+    <label for="adminToken">
+      Token (se imprime en la consola del servidor al arrancar)
+    </label>
+
+    <input
+      id="adminToken"
+      type="password"
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+      placeholder="Admin token"
+    >
+  </section>
+
+  <section>
+    <h2>Importar identidad</h2>
+
+    <label for="nsec">Clave privada nsec</label>
+
+    <input
+      id="nsec"
+      type="password"
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+      placeholder="nsec1..."
+    >
+
+    <button id="importBtn" type="button">
+      Importar clave
+    </button>
+
+    <button
+      id="generateBtn"
+      class="secondary"
+      type="button"
+    >
+      Generar identidad de prueba
+    </button>
+  </section>
+
+  <section>
+    <h2>Identidad</h2>
+
+    <p
+      id="identity"
+      class="muted"
+      aria-live="polite"
+    >Sin identidad inicializada.</p>
+
+    <button
+      id="statusBtn"
+      class="secondary"
+      type="button"
+    >
+      Consultar estado
+    </button>
+
+    <button
+      id="bunkerBtn"
+      type="button"
+    >
+      Generar URI bunker
+    </button>
+
+    <textarea
+      id="bunkerURI"
+      readonly
+      spellcheck="false"
+      placeholder="La URI bunker aparecerá aquí..."
+      aria-label="URI de conexión bunker"
+    ></textarea>
+
+    <button
+      id="copyBtn"
+      class="secondary"
+      type="button"
+    >
+      Copiar URI
+    </button>
+  </section>
+
+  <p
+    id="status"
+    role="status"
+    aria-live="polite"
+  ></p>
+
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+const buttons = {
+  import: $("importBtn"),
+  generate: $("generateBtn"),
+  status: $("statusBtn"),
+  bunker: $("bunkerBtn"),
+  copy: $("copyBtn")
+};
+
+// Impide ejecutar dos operaciones simultáneas del mismo tipo.
+async function withLoading(button, loadingText, action) {
+  if (button.disabled) {
+    return;
+  }
+
+  const originalText = button.textContent;
+
+  button.disabled = true;
+  button.textContent = loadingText;
+
+  try {
+    return await action();
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+// Cliente HTTP: envía el token de administrador (solo en memoria, nunca
+// en localStorage) y valida el tipo de respuesta.
+async function api(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+
+  const response = await fetch(path, {
+    ...options,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: {
+      "Accept": "application/json",
+      "X-Admin-Token": $("adminToken").value.trim(),
+      // El servidor exige JSON en todo POST, aunque no lleve cuerpo.
+      ...(method === "POST" ? {
+        "Content-Type": "application/json"
+      } : {}),
+      ...options.headers
+    }
+  });
+
+  if (response.status === 401) {
+    throw new Error("Token de administrador inválido o ausente.");
+  }
+
+  const contentType =
+    response.headers.get("content-type") || "";
+
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(
+      `Respuesta inesperada del servidor: HTTP ${response.status}`
+    );
+  }
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.error || `Error HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+function showStatus(message) {
+  $("status").textContent = message;
+}
+
+// Importación de identidad.
+async function importKey() {
+  return withLoading(
+    buttons.import,
+    "Importando...",
+    async () => {
+      const input = $("nsec");
+      const nsec = input.value.trim();
+
+      if (!nsec) {
+        showStatus("Introduce una clave nsec.");
+        return;
+      }
+
+      try {
+        const result = await api("/api/key/import", {
+          method: "POST",
+          body: JSON.stringify({ nsec })
+        });
+
+        $("identity").textContent = result.pubkey;
+        $("bunkerURI").value = "";
+
+        showStatus("Identidad importada correctamente.");
+
+      } catch (error) {
+        showStatus(error.message);
+
+      } finally {
+        // No mantener la clave privada en el formulario.
+        input.value = "";
+      }
+    }
+  );
+}
+
+// Generación de identidad.
+async function generateKey() {
+  return withLoading(
+    buttons.generate,
+    "Generando...",
+    async () => {
+      try {
+        const result = await api("/api/key/generate", {
+          method: "POST"
+        });
+
+        $("identity").textContent = result.pubkey;
+        $("bunkerURI").value = "";
+
+        showStatus("Identidad de prueba generada.");
+
+      } catch (error) {
+        showStatus(error.message);
+      }
+    }
+  );
+}
+
+// Consulta del estado.
+async function getStatus() {
+  return withLoading(
+    buttons.status,
+    "Consultando...",
+    async () => {
+      try {
+        const result = await api("/api/status");
+
+        $("identity").textContent = result.initialized
+          ? result.pubkey
+          : "Sin identidad inicializada.";
+
+        if (!result.initialized) {
+          $("bunkerURI").value = "";
+        }
+
+        showStatus(
+          result.initialized
+            ? "Signer inicializado."
+            : "Vault todavía no inicializado."
+        );
+
+      } catch (error) {
+        showStatus(error.message);
+      }
+    }
+  );
+}
+
+// Generación de URI bunker.
+async function generateBunker() {
+  return withLoading(
+    buttons.bunker,
+    "Generando URI...",
+    async () => {
+      try {
+        const result = await api("/api/bunker", {
+          method: "GET"
+        });
+
+        $("bunkerURI").value = result.bunker;
+
+        showStatus("URI bunker generada correctamente.");
+
+      } catch (error) {
+        showStatus(error.message);
+      }
+    }
+  );
+}
+
+// Copia de URI.
+async function copyBunker() {
+  return withLoading(
+    buttons.copy,
+    "Copiando...",
+    async () => {
+      const value = $("bunkerURI").value;
+
+      if (!value) {
+        showStatus("Primero genera una URI bunker.");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(value);
+        showStatus("URI copiada correctamente.");
+
+      } catch {
+        showStatus(
+          "No se pudo acceder al portapapeles. " +
+          "Puedes copiar la URI manualmente."
+        );
+      }
+    }
+  );
+}
+
+// Event listeners.
+buttons.import.addEventListener("click", importKey);
+buttons.generate.addEventListener("click", generateKey);
+buttons.status.addEventListener("click", getStatus);
+buttons.bunker.addEventListener("click", generateBunker);
+buttons.copy.addEventListener("click", copyBunker);
+
+// No se consulta el estado al cargar: sin token daría 401.
+// El operador pega el token y pulsa "Consultar estado".
+
+</script>
+
+</body>
+</html>
